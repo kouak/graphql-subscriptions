@@ -104,6 +104,19 @@ const schema = new GraphQLSchema({
           return root;
         },
       },
+      testDefaultArguments: {
+        type: GraphQLString,
+        resolve: (root, { testArgument }) => {
+          console.log('testDefaultArguments resolver called');
+          return testArgument === 1234 ? 'defaultValue' : `other value ${testArgument}`;
+        },
+        args: {
+          testArgument: {
+            type: GraphQLInt,
+            defaultValue: 1234,
+          },
+        },
+      },
     },
   }),
 });
@@ -151,6 +164,14 @@ describe('SubscriptionManager', function() {
         return {
           contextTrigger(rootValue, context) {
             return context === 'trigger';
+          },
+        };
+      },
+      testDefaultArguments: (opts, args) => {
+        console.log('Setup function called', args);
+        return {
+          'Trigger1': {
+            filter: () => true,
           },
         };
       },
@@ -437,7 +458,104 @@ describe('SubscriptionManager', function() {
   });
 });
 
+describe('SubscriptionManager setupFunctions', () => {
+  let subManager;
+  let spy;
 
+  beforeEach(() => {
+    const pubsub = new PubSub();
+
+    const testDefaultArguments = (opts, args) => ({
+      'Trigger1': {
+        filter: () => true,
+      },
+    });
+
+    spy = sinon.spy(testDefaultArguments);
+
+    subManager = new SubscriptionManager({
+      schema,
+      setupFunctions: {
+        testDefaultArguments: spy,
+      },
+      pubsub,
+    });
+  });
+
+  afterEach(() => {
+    subManager = undefined;
+    spy = undefined;
+  });
+
+
+  it('should pass GraphQL arguments to setupFunctions', (done) => {
+    const query = /* GraphQL */`
+      subscription TestDefaultArguments {
+        testDefaultArguments(testArgument: 10)
+      }
+    `;
+
+    const callback = function(err, payload){
+      if (err) {
+        done(err);
+        return;
+      }
+      try {
+        sinon.assert.calledOnce(spy);
+        sinon.assert.alwaysCalledWithMatch(spy, sinon.match.any, { testArgument: 10 });
+        expect(payload.data.testDefaultArguments).to.equals('other value 10');
+      } catch (e) {
+        done(e);
+        return;
+      }
+      done();
+    };
+
+    subManager.subscribe({
+      query,
+      operationName: 'TestDefaultArguments',
+      callback,
+    }).then(subId => {
+      subManager.publish('Trigger1', { foo: 'bar' });
+      subManager.unsubscribe(subId);
+    });
+
+  });
+
+
+  it('should pass default GraphQL arguments to filter functions', (done) => {
+    const query = /* GraphQL */`
+      subscription TestDefaultArguments {
+        testDefaultArguments
+      }
+    `;
+
+     const callback = function(err, payload){
+       if (err) {
+         done(err);
+         return;
+       }
+       try {
+         sinon.assert.calledOnce(spy);
+         sinon.assert.alwaysCalledWithMatch(spy, sinon.match.any, { testArgument: 1234 });
+         expect(payload.data.testDefaultArguments).to.equals('defaultValue');
+       } catch (e) {
+         done(e);
+         return;
+       }
+       done();
+     };
+
+     subManager.subscribe({
+       query,
+       operationName: 'TestDefaultArguments',
+       callback,
+     }).then(subId => {
+       subManager.publish('Trigger1', { foo: 'bar' });
+       subManager.unsubscribe(subId);
+     });
+  });
+});
 // ---------------------------------------------
 // validation tests ....
 
